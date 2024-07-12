@@ -1,0 +1,12 @@
+apiVersion: database.example.com/v1alpha1
+kind: Postgresql
+metadata:
+  labels:
+    app.kubernetes.io/name: mini-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: postgresql-sample
+spec:
+  dbname: postgres_dbname
+  password: postgres_passsword
+  username: postgres_username
+  query: 'CREATE TABLE IF NOT EXISTS test (id serial PRIMARY KEY, name VARCHAR(255) NOT NULL);'
