@@ -139,7 +139,7 @@ func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 				Name:     "postgresql",
 			}},
 			Selector: map[string]string{"app": postgresql.Name},
-			Type:     corev1.ServiceTypeNodePort,
+			Type:     corev1.ServiceTypeClusterIP,
 		},
 	}
 
@@ -184,26 +184,35 @@ func int32Ptr(i int32) *int32 { return &i }
 func (r *PostgresqlReconciler) execSQLQuery(ctx context.Context, postgresql *databasev1alpha1.Postgresql) error {
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("%s-init-db", postgresql.Name),
+			Name:      fmt.Sprintf("%s-exec-script", postgresql.Name),
 			Namespace: postgresql.Namespace,
 		},
 		Spec: batchv1.JobSpec{
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"app": postgresql.Name,
-					},
+					Labels: map[string]string{"app": postgresql.Name},
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name:  "init-db",
-							Image: "postgres:latest",
-							Command: []string{
-								"psql",
-								"-U", postgresql.Spec.Username,
-								"-d", postgresql.Spec.Dbname,
-								"-c", postgresql.Spec.Query,
+							Name:    "busybox",
+							Image:   "postgres:latest",
+							Command: []string{"/bin/sh", "-c"},
+							Args: []string{
+								fmt.Sprintf(`while true; do
+																pg_isready -h %s -p 5432
+																if [ $? -ne 0 ]; then
+																		echo "PostgreSQL is down! Executing command..."
+																		psql -h %s -U %s -d %s -c "%s"
+																		# 예시: curl -X POST http://<your-webhook-url>
+																fi
+																sleep 10
+														done`,
+									"postgresql-sample",
+									"postgresql-sample",
+									postgresql.Spec.Username,
+									postgresql.Spec.Dbname,
+									postgresql.Spec.Query),
 							},
 							Env: []corev1.EnvVar{
 								{
@@ -224,16 +233,8 @@ func (r *PostgresqlReconciler) execSQLQuery(ctx context.Context, postgresql *dat
 		return err
 	}
 
-	// Check if the job already exists
-	found := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: job.Name, Namespace: job.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
-		// Create the job
-		err = r.Create(ctx, job)
-		if err != nil {
-			return err
-		}
-	} else if err != nil {
+	// Create the Job
+	if err := r.Client.Create(ctx, job); err != nil {
 		return err
 	}
 
